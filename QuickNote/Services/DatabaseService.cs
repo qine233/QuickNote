@@ -286,9 +286,9 @@ public class DatabaseService : IDisposable
     /// and keeps only the latest 20 entries.
     /// </summary>
     /// <param name="segments">
-    /// Ordered text/image content when QuickNote made this copy, so the row can
-    /// put the pictures back on the clipboard. Text picked up from elsewhere
-    /// has none and stays text only.
+    /// Ordered content QuickNote actually copied, so the row can put the
+    /// pictures back on the clipboard. A script with no images has none and is
+    /// re-copied as text.
     /// </param>
     public void AddClipboardEntry(string content, IReadOnlyList<ContentSegment>? segments = null)
     {

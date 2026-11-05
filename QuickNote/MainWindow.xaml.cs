@@ -34,59 +34,13 @@ public partial class MainWindow : Window
             new MouseButtonEventHandler(Editor_PreviewMouseDown), handledEventsToo: true);
 
         SetupTrayIcon();
-        StartClipboardMonitor();
         _dockTimer.Tick += DockTimer_Tick;
     }
 
-    // ─── Clipboard monitor ──────────────────────────────────────────────
-    // The app reads the system clipboard on a timer (a clipboard viewer chain
-    // would need P/Invoke). Only text is recorded, and QuickNote never writes
-    // anything on its own.
-
-    private readonly DispatcherTimer _clipboardTimer = new()
-    {
-        Interval = TimeSpan.FromMilliseconds(1000),
-    };
-
-    private string? _lastSeenClipboard;
-
-    private void StartClipboardMonitor()
-    {
-        // Seed with the current clipboard so a restart does not duplicate the
-        // entry that was already recorded last time.
-        try
-        {
-            if (Clipboard.ContainsText())
-                _lastSeenClipboard = Clipboard.GetText();
-        }
-        catch (ExternalException)
-        {
-            // Clipboard busy; the first tick will pick the text up.
-        }
-
-        _clipboardTimer.Tick += (_, _) => PollClipboard();
-        _clipboardTimer.Start();
-    }
-
-    private void PollClipboard()
-    {
-        try
-        {
-            if (!Clipboard.ContainsText())
-                return;
-
-            var text = Clipboard.GetText();
-            if (string.IsNullOrWhiteSpace(text) || text == _lastSeenClipboard)
-                return;
-
-            _lastSeenClipboard = text;
-            _viewModel.RecordClipboardText(text);
-        }
-        catch (ExternalException)
-        {
-            // Another process holds the clipboard; try again next tick.
-        }
-    }
+    // No clipboard monitor: the app never reads what you copied elsewhere. The
+    // history panel fills only from copies QuickNote makes itself, so text that
+    // happens to pass through the clipboard (customer phone numbers, addresses,
+    // order ids) is never written to disk.
 
     private void ClipboardOverlay_BackgroundClick(object sender, MouseButtonEventArgs e)
     {
@@ -755,7 +709,6 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        _clipboardTimer.Stop();
         _dockTimer.Stop();
         _trayIcon?.Dispose();
         _viewModel.Dispose();

@@ -74,12 +74,13 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     // ─── Clipboard history ──────────────────────────────────────────────
 
+    // Filled only by QuickNote's own copies; nothing is read back off the
+    // clipboard, so text copied from elsewhere never lands here.
     public ObservableCollection<ClipboardEntry> ClipboardHistory { get; } = [];
 
-    // Clipboard text can be large; cap what we store so repeated copies of a
-    // huge selection don't bloat the database.
+    // Copied text can be large; cap what we store so repeated copies of a
+    // huge script don't bloat the database.
     private const int MaxClipboardChars = 50000;
-    private string? _lastRecordedClipboard;
 
     private bool _isClipboardOpen;
     public bool IsClipboardOpen
@@ -357,9 +358,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// Files a copy QuickNote just made in the clipboard history. The marker is
-    /// set first so the text poller does not record the same copy again, minus
-    /// its pictures.
+    /// Files a copy QuickNote just made in the clipboard history, together with
+    /// its ordered segments so the row can put the pictures back later.
     /// </summary>
     private void RecordCopy(string content, IReadOnlyList<ContentSegment>? segments)
     {
@@ -367,7 +367,6 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             return;
 
         var stored = content.Length > MaxClipboardChars ? content[..MaxClipboardChars] : content;
-        _lastRecordedClipboard = stored;
 
         try
         {
@@ -387,22 +386,6 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         ClipboardHistory.Clear();
         foreach (var entry in _db.GetClipboardEntries())
             ClipboardHistory.Add(entry);
-    }
-
-    /// <summary>
-    /// Called by the UI poller when the system clipboard text changes. Text the
-    /// user copied elsewhere has no segments and is stored as text only.
-    /// </summary>
-    public void RecordClipboardText(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return;
-
-        var content = text.Length > MaxClipboardChars ? text[..MaxClipboardChars] : text;
-        if (content == _lastRecordedClipboard)
-            return;
-
-        RecordCopy(content, null);
     }
 
     private void CopyClipboardEntry(ClipboardEntry? entry)
