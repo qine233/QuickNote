@@ -304,42 +304,41 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
         try
         {
-            var text = script.CopyText;
+            // Segments carry the authored order, so the paste comes out as the
+            // same text/image sequence the script was written in.
+            var result = RichClipboardService.Copy(script.SegmentsList);
 
-            // Check if there are images to copy alongside text
-            if (script.HasImages)
+            var what = result switch
             {
-                var imageFiles = script.ImageFileNames
-                    .Select(DatabaseService.GetImagePath)
-                    .Where(File.Exists)
-                    .ToArray();
-
-                if (imageFiles.Length > 0)
-                {
-                    // Use WinForms DataObject to copy both text + image
-                    var dataObj = new System.Windows.Forms.DataObject();
-                    if (!string.IsNullOrWhiteSpace(text))
-                        dataObj.SetText(text);
-
-                    using (var img = System.Drawing.Image.FromFile(imageFiles[0]))
-                    {
-                        dataObj.SetImage(img);
-                        System.Windows.Forms.Clipboard.SetDataObject(dataObj);
-                    }
-
-                    ShowToast($"已复制：{script.Title}（含图片）");
-                    return;
-                }
-            }
-
-            // Text only
-            if (!string.IsNullOrWhiteSpace(text))
-                Clipboard.SetText(text);
-
-            ShowToast($"已复制：{script.Title}");
+                { IsRich: true, HasText: true } => $"文字 + {result.ImageCount} 张图片",
+                { IsRich: true } => $"{result.ImageCount} 张图片",
+                _ => "文字",
+            };
+            var name = string.IsNullOrWhiteSpace(script.Title) ? "话术" : script.Title;
+            var lost = result.MissingImageCount > 0
+                ? $"，{result.MissingImageCount} 张图片文件已丢失"
+                : "";
+            ShowToast($"已复制「{name}」（{what}{lost}）");
         }
         catch (Exception ex)
         {
+            // A rich payload can fail (another process grabs the clipboard at
+            // that moment). Never leave the user with nothing.
+            try
+            {
+                var text = script.CopyText;
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    Clipboard.SetText(text);
+                    ShowToast($"图文复制失败，已只复制文字：{ex.Message}");
+                    return;
+                }
+            }
+            catch
+            {
+                // fall through to the failure toast
+            }
+
             ShowToast($"复制失败：{ex.Message}");
         }
     }
