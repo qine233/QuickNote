@@ -556,14 +556,15 @@ public partial class MainWindow : Window
         if (raw == null)
         {
             // Last resort: the clipboard itself. Mid-paste it can still be
-            // locked by the source process, which is a miss rather than an error.
+            // locked by the source process, which is a miss rather than an
+            // error. COMException derives from ExternalException, so this
+            // catches both.
             try
             {
                 if (System.Windows.Forms.Clipboard.ContainsImage())
                     raw = System.Windows.Forms.Clipboard.GetImage();
             }
             catch (ExternalException) { }
-            catch (COMException) { }
         }
 
         var path = Path.Combine(Path.GetTempPath(), $"QuickNote-paste-{Guid.NewGuid():N}.png");
