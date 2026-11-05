@@ -41,12 +41,15 @@ jobs:
           -c Release -r win-x64 --self-contained true
           -o publish
 
-      - name: Zip
+      # The publish is already a single file exe; zipping it saved 2%, so the
+      # Release carries the exe itself and one download is all it takes.
+      - name: Package
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
-          Compress-Archive -Path publish/* -DestinationPath "QuickNote-$version-win-x64.zip"
-          "PACKAGE=QuickNote-$version-win-x64.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $name = "QuickNote-$version-win-x64.exe"
+          Copy-Item publish/QuickNote.exe $name
+          "PACKAGE=$name" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # bash, not pwsh: PowerShell reads the continued "--title" line as the
       # range operator and aborts with "Missing expression after unary operator".
