@@ -149,9 +149,6 @@ public static class RichClipboardService
 
     private const string HtmlSuffix = "<!--EndFragment-->\r\n</body>\r\n</html>";
 
-    // "<!--StartFragment-->" — the fragment starts right after this marker.
-    private const int HtmlStartMarkerBytes = 20;
-
     /// <summary>
     /// One block per segment, in order. No font or colour is forced so the
     /// paste target keeps its own look.
@@ -218,9 +215,11 @@ public static class RichClipboardService
         var suffixLength = utf8.GetByteCount(HtmlSuffix);
         var bodyLength = utf8.GetByteCount(fragment);
 
+        // HtmlPrefix already ends with "<!--StartFragment-->", so the fragment
+        // begins exactly where the prefix ends.
         var startHtml = headerLength;
         var endHtml = headerLength + prefixLength + bodyLength + suffixLength;
-        var startFragment = headerLength + prefixLength + HtmlStartMarkerBytes;
+        var startFragment = headerLength + prefixLength;
         var endFragment = startFragment + bodyLength;
 
         var document = CfHtmlHeader(startHtml, endHtml, startFragment, endFragment)
