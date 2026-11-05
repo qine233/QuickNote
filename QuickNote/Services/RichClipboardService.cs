@@ -24,13 +24,23 @@ namespace QuickNote.Services;
 public static class RichClipboardService
 {
     /// <summary>
-    /// Result of one rich copy, used for the toast text.
+    /// Result of one rich copy, used for the toast text and for the clipboard
+    /// history row, which replays <see cref="CopiedSegments"/> on re-paste.
     /// </summary>
     public sealed class Result
     {
         public int ImageCount { get; init; }
         public int MissingImageCount { get; init; }
         public bool HasText { get; init; }
+
+        /// <summary>Text that went on the clipboard as CF_UNICODETEXT.</summary>
+        public string PlainText { get; init; } = "";
+
+        /// <summary>
+        /// The ordered content actually copied, with images whose file exists.
+        /// Empty for a plain text payload.
+        /// </summary>
+        public IReadOnlyList<ContentSegment> CopiedSegments { get; init; } = [];
 
         /// <summary>True when at least one usable image joined the payload.</summary>
         public bool IsRich => ImageCount > 0;
@@ -137,7 +147,23 @@ public static class RichClipboardService
             ImageCount = imagePaths.Count,
             MissingImageCount = missingImageCount,
             HasText = hasText,
+            PlainText = hasText ? plainText : "",
+            CopiedSegments = imagePaths.Count > 0 ? ToSegments(blocks) : [],
         };
+    }
+
+    /// <summary>
+    /// The copied payload as stored segments, so a clipboard history row can
+    /// replay exactly what was on the clipboard.
+    /// </summary>
+    private static List<ContentSegment> ToSegments(IReadOnlyList<Block> blocks)
+    {
+        var list = new List<ContentSegment>(blocks.Count);
+        foreach (var block in blocks)
+            list.Add(block.IsText
+                ? ContentSegment.Text(block.Text!)
+                : ContentSegment.Image(Path.GetFileName(block.ImagePath!)));
+        return list;
     }
 
     // ─── HTML (CF_HTML) ─────────────────────────────────────────────────

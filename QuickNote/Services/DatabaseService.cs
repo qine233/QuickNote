@@ -66,7 +66,8 @@ public class DatabaseService : IDisposable
             CREATE TABLE IF NOT EXISTS ClipboardHistory (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Content TEXT NOT NULL,
-                CreatedAt TEXT NOT NULL
+                CreatedAt TEXT NOT NULL,
+                Segments TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS FolderCategories (
@@ -80,23 +81,32 @@ public class DatabaseService : IDisposable
         cmd.ExecuteNonQuery();
 
         EnsureSegmentsColumn();
+        EnsureClipboardSegmentsColumn();
     }
 
-    private void EnsureSegmentsColumn()
+    private void EnsureSegmentsColumn() => EnsureColumn("Scripts", "Segments");
+
+    private void EnsureClipboardSegmentsColumn() => EnsureColumn("ClipboardHistory", "Segments");
+
+    /// <summary>
+    /// Adds a column that databases from an older build predate. Both arguments
+    /// are literals from this file, never user input.
+    /// </summary>
+    private void EnsureColumn(string table, string column)
     {
         using (var check = _connection.CreateCommand())
         {
-            check.CommandText = "PRAGMA table_info(Scripts)";
+            check.CommandText = $"PRAGMA table_info({table})";
             using var reader = check.ExecuteReader();
             while (reader.Read())
             {
-                if (string.Equals(reader.GetString(1), "Segments", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
                     return;
             }
         }
 
         using var alter = _connection.CreateCommand();
-        alter.CommandText = "ALTER TABLE Scripts ADD COLUMN Segments TEXT NOT NULL DEFAULT ''";
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT ''";
         alter.ExecuteNonQuery();
     }
 
@@ -272,20 +282,28 @@ public class DatabaseService : IDisposable
     // ─── Clipboard history ──────────────────────────────────────────────
 
     /// <summary>
-    /// Adds a clipboard text snapshot, moving an identical older entry to the
-    /// top, and keeps only the latest 20 entries.
+    /// Adds a clipboard snapshot, moving an identical older entry to the top,
+    /// and keeps only the latest 20 entries.
     /// </summary>
-    public void AddClipboardEntry(string content)
+    /// <param name="segments">
+    /// Ordered text/image content when QuickNote made this copy, so the row can
+    /// put the pictures back on the clipboard. Text picked up from elsewhere
+    /// has none and stays text only.
+    /// </param>
+    public void AddClipboardEntry(string content, IReadOnlyList<ContentSegment>? segments = null)
     {
+        var segmentsJson = segments is { Count: > 0 } ? JsonSerializer.Serialize(segments) : "";
+
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            DELETE FROM ClipboardHistory WHERE Content = $content;
-            INSERT INTO ClipboardHistory (Content, CreatedAt) VALUES ($content, $now);
+            DELETE FROM ClipboardHistory WHERE Content = $content AND Segments = $segments;
+            INSERT INTO ClipboardHistory (Content, CreatedAt, Segments) VALUES ($content, $now, $segments);
             DELETE FROM ClipboardHistory WHERE Id NOT IN (
                 SELECT Id FROM ClipboardHistory ORDER BY Id DESC LIMIT 20
             );
         """;
         cmd.Parameters.AddWithValue("$content", content);
+        cmd.Parameters.AddWithValue("$segments", segmentsJson);
         cmd.Parameters.AddWithValue("$now", DateTime.Now.ToString("o"));
         cmd.ExecuteNonQuery();
     }
@@ -293,7 +311,7 @@ public class DatabaseService : IDisposable
     public List<ClipboardEntry> GetClipboardEntries()
     {
         using var cmd = _connection.CreateCommand();
-        cmd.CommandText = "SELECT Id, Content, CreatedAt FROM ClipboardHistory ORDER BY Id DESC LIMIT 20";
+        cmd.CommandText = "SELECT Id, Content, CreatedAt, Segments FROM ClipboardHistory ORDER BY Id DESC LIMIT 20";
         var list = new List<ClipboardEntry>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
@@ -303,6 +321,7 @@ public class DatabaseService : IDisposable
                 Id = reader.GetInt64(0),
                 Content = reader.GetString(1),
                 CreatedAt = ParseDateTime(reader.GetString(2)),
+                Segments = reader.IsDBNull(3) ? "" : reader.GetString(3),
             });
         }
         return list;

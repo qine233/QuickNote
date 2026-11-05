@@ -306,7 +306,12 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             // Segments carry the authored order, so the paste comes out as the
             // same text/image sequence the script was written in.
-            var result = RichClipboardService.Copy(script.SegmentsList);
+            var segments = script.SegmentsList;
+            var result = RichClipboardService.Copy(segments);
+
+            // Record it now, with its segments: the text poller would otherwise
+            // notice the copy a second later and file it as text only.
+            RecordCopy(result.PlainText, result.CopiedSegments.Count > 0 ? result.CopiedSegments : null);
 
             var what = result switch
             {
@@ -324,22 +329,54 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             // A rich payload can fail (another process grabs the clipboard at
             // that moment). Never leave the user with nothing.
-            try
-            {
-                var text = script.CopyText;
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    Clipboard.SetText(text);
-                    ShowToast($"图文复制失败，已只复制文字：{ex.Message}");
-                    return;
-                }
-            }
-            catch
-            {
-                // fall through to the failure toast
-            }
+            if (CopyTextOnly(script.CopyText))
+                ShowToast($"图文复制失败，已只复制文字：{ex.Message}");
+            else
+                ShowToast($"复制失败：{ex.Message}");
+        }
+    }
 
-            ShowToast($"复制失败：{ex.Message}");
+    /// <summary>
+    /// Puts plain text on the clipboard. Used when a rich payload was refused,
+    /// and for history rows that never carried pictures.
+    /// </summary>
+    private bool CopyTextOnly(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        try
+        {
+            Clipboard.SetText(text);
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Files a copy QuickNote just made in the clipboard history. The marker is
+    /// set first so the text poller does not record the same copy again, minus
+    /// its pictures.
+    /// </summary>
+    private void RecordCopy(string content, IReadOnlyList<ContentSegment>? segments)
+    {
+        if (string.IsNullOrWhiteSpace(content) && segments == null)
+            return;
+
+        var stored = content.Length > MaxClipboardChars ? content[..MaxClipboardChars] : content;
+        _lastRecordedClipboard = stored;
+
+        try
+        {
+            _db.AddClipboardEntry(stored, segments);
+            LoadClipboardHistory();
+        }
+        catch
+        {
+            // A failed history write must never interrupt a copy.
         }
     }
 
@@ -353,7 +390,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// Called by the UI poller when the system clipboard text changes.
+    /// Called by the UI poller when the system clipboard text changes. Text the
+    /// user copied elsewhere has no segments and is stored as text only.
     /// </summary>
     public void RecordClipboardText(string text)
     {
@@ -363,17 +401,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         var content = text.Length > MaxClipboardChars ? text[..MaxClipboardChars] : text;
         if (content == _lastRecordedClipboard)
             return;
-        _lastRecordedClipboard = content;
 
-        try
-        {
-            _db.AddClipboardEntry(content);
-            LoadClipboardHistory();
-        }
-        catch
-        {
-            // A failed history write must never interrupt normal clipboard use.
-        }
+        RecordCopy(content, null);
     }
 
     private void CopyClipboardEntry(ClipboardEntry? entry)
@@ -382,15 +411,28 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
         try
         {
+            // A row that was copied with pictures replays them, in order.
+            if (entry.HasImages)
+            {
+                var segments = entry.SegmentsList;
+                var result = RichClipboardService.Copy(segments);
+                RecordCopy(entry.Content, segments);
+                ShowToast(result.IsRich
+                    ? $"已复制（{result.ImageCount} 张图片）"
+                    : "已复制文字（原图片文件已丢失）");
+                return;
+            }
+
             Clipboard.SetText(entry.Content);
-            _lastRecordedClipboard = entry.Content;
-            _db.AddClipboardEntry(entry.Content);
-            LoadClipboardHistory();
+            RecordCopy(entry.Content, null);
             ShowToast("已复制到剪切板");
         }
         catch (Exception ex)
         {
-            ShowToast($"复制失败：{ex.Message}");
+            if (CopyTextOnly(entry.Content))
+                ShowToast($"图文复制失败，已只复制文字：{ex.Message}");
+            else
+                ShowToast($"复制失败：{ex.Message}");
         }
     }
 
