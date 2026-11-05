@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.IO;
 using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -8,6 +9,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using QuickNote.Converters;
@@ -476,8 +478,14 @@ public partial class MainWindow : Window
 
     private void OnEditorPaste(object sender, DataObjectPastingEventArgs e)
     {
-        // Only plain text can be persisted; rich clipboard content would bring
-        // images that have no backing file.
+        // A screenshot or a picture file becomes a real image block; pasting a
+        // script's own rich content still comes in as text only, because the
+        // markup carries file references rather than pictures we could own.
+        if (TryPasteImages(e))
+            return;
+
+        // Anything else is reduced to plain text, which is all the editor can
+        // persist alongside images.
         var text = e.SourceDataObject?.GetDataPresent(DataFormats.UnicodeText) == true
             ? e.SourceDataObject.GetData(DataFormats.UnicodeText) as string
             : null;
@@ -489,6 +497,98 @@ public partial class MainWindow : Window
         }
 
         e.DataObject = new DataObject(DataFormats.UnicodeText, text);
+    }
+
+    private static readonly string[] ImageExtensions =
+        [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
+
+    /// <summary>
+    /// Inserts every picture the paste source carries, at the caret. Returns
+    /// false when the source holds no image, leaving the caller to paste text.
+    /// </summary>
+    private bool TryPasteImages(DataObjectPastingEventArgs e)
+    {
+        var source = e.SourceDataObject;
+        if (source == null)
+            return false;
+
+        var paths = new List<string>();
+
+        if (source.GetDataPresent(DataFormats.FileDrop) &&
+            source.GetData(DataFormats.FileDrop) is string[] files)
+        {
+            paths.AddRange(files.Where(IsImageFile));
+        }
+
+        // Only a clipboard bitmap when no file came along, so a mixed copy of
+        // pictures plus text still keeps the pictures.
+        if (paths.Count == 0)
+        {
+            var temp = SaveClipboardBitmapAsPng(source);
+            if (temp != null)
+                paths.Add(temp);
+        }
+
+        if (paths.Count == 0)
+            return false;
+
+        e.CancelCommand();
+        foreach (var path in paths)
+            InsertImageAtCaret(new EditImage { SourcePath = path });
+        ContentEditor.Focus();
+        return true;
+    }
+
+    private static bool IsImageFile(string path) =>
+        ImageExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
+
+    /// <summary>
+    /// Writes the pasted bitmap out as a PNG the app can copy into its images
+    /// directory on save: a clipboard picture has no backing file of its own.
+    /// Returns null when the source carries no decodable image.
+    /// </summary>
+    private static string? SaveClipboardBitmapAsPng(IDataObject source)
+    {
+        object? raw = null;
+        if (source.GetDataPresent(DataFormats.Bitmap))
+            raw = source.GetData(DataFormats.Bitmap);
+
+        if (raw == null)
+        {
+            // Last resort: the clipboard itself. Mid-paste it can still be
+            // locked by the source process, which is a miss rather than an error.
+            try
+            {
+                if (System.Windows.Forms.Clipboard.ContainsImage())
+                    raw = System.Windows.Forms.Clipboard.GetImage();
+            }
+            catch (ExternalException) { }
+            catch (COMException) { }
+        }
+
+        var path = Path.Combine(Path.GetTempPath(), $"QuickNote-paste-{Guid.NewGuid():N}.png");
+        try
+        {
+            switch (raw)
+            {
+                case System.Drawing.Bitmap drawing:
+                    drawing.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+                    return path;
+                case BitmapSource bitmapSource:
+                    var encoder = new PngBitmapEncoder();
+                    encoder.Frames.Add(BitmapFrame.Create(bitmapSource));
+                    using (var stream = File.Create(path))
+                        encoder.Save(stream);
+                    return path;
+                default:
+                    return null;
+            }
+        }
+        catch (Exception)
+        {
+            try { File.Delete(path); } catch (IOException) { }
+            return null;
+        }
     }
 
     // ─── Right-edge dock (mouse near edge reveals) ───────────────────────

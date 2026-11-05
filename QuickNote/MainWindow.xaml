@@ -685,6 +685,11 @@
                                             FontSize="11.5" Padding="8,4" Margin="2,0,0,0"
                                             Foreground="{StaticResource DangerBrush}"
                                             Click="DeleteImage_Click" />
+                                    <TextBlock Text="· 截图 / 图片可直接 Ctrl+V"
+                                               FontSize="11"
+                                               Foreground="{StaticResource TextHintBrush}"
+                                               VerticalAlignment="Center"
+                                               Margin="6,0,0,0" />
                                 </StackPanel>
                             </StackPanel>
                         </ScrollViewer>
@@ -740,7 +745,7 @@
                                 </Border>
                                 <TextBlock Text="暂无剪切板记录" FontSize="15" FontWeight="SemiBold"
                                            HorizontalAlignment="Center" Margin="0,12,0,0" />
-                                <TextBlock Text="复制任意文字后会自动记录"
+                                <TextBlock Text="复制话术或任意文字后会自动记录，图片一并保留"
                                            FontSize="12" Foreground="{StaticResource TextHintBrush}"
                                            HorizontalAlignment="Center" Margin="0,5,0,0" />
                             </StackPanel>
@@ -781,6 +786,15 @@
                                                     <StackPanel Grid.Column="1"
                                                                 VerticalAlignment="Top"
                                                                 Margin="0,1,0,0">
+                                                        <Border HorizontalAlignment="Right"
+                                                                Background="{StaticResource PrimaryLightBrush}"
+                                                                CornerRadius="7" Padding="6,1"
+                                                                Margin="0,0,0,5"
+                                                                Visibility="{Binding ImageBadge, Converter={StaticResource StringToVis}}">
+                                                            <TextBlock Text="{Binding ImageBadge}"
+                                                                       FontSize="10.5" FontWeight="SemiBold"
+                                                                       Foreground="{StaticResource PrimaryBrush}" />
+                                                        </Border>
                                                         <TextBlock Text="{Binding TimeText}"
                                                                    FontSize="10.5"
                                                                    Foreground="{StaticResource TextHintBrush}"
