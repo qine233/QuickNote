@@ -49,6 +49,9 @@
             <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}" />
             <SolidColorBrush x:Key="DividerBrush" Color="{StaticResource DividerColor}" />
 
+            <!-- Search hit marker behind matched characters in the list rows -->
+            <SolidColorBrush x:Key="SearchHighlightBrush" Color="#FFE08A" />
+
             <!-- MDL2 only: Fluent Icons (Win11) remaps or drops several legacy
                  PUA codepoints (window controls, download/upload, ...), so it is
                  not listed to avoid blank glyphs. -->

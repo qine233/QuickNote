@@ -3,6 +3,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:conv="clr-namespace:QuickNote.Converters"
+        xmlns:controls="clr-namespace:QuickNote.Controls"
         xmlns:models="clr-namespace:QuickNote.Models"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="QuickNote"
@@ -221,7 +222,7 @@
                     <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}"
                                FontSize="12.5" Foreground="{StaticResource TextHintBrush}"
                                VerticalAlignment="Center" Margin="11,0,0,0" />
-                    <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                    <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=260}"
                              Background="Transparent" BorderThickness="0"
                              FontSize="13" Padding="32,0,10,0"
                              VerticalContentAlignment="Center"
@@ -319,86 +320,114 @@
                     <!-- Script list card (single-line rows) -->
                     <Border Background="{StaticResource BgCardBrush}" CornerRadius="12"
                             Visibility="{Binding TotalScriptCount, Converter={StaticResource CountToVis}}">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                        <ScrollViewer x:Name="ScriptListScroll"
+                                      VerticalScrollBarVisibility="Auto"
                                       HorizontalScrollBarVisibility="Disabled"
                                       ScrollChanged="ScriptList_ScrollChanged">
-                            <ItemsControl ItemsSource="{Binding Scripts}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate DataType="{x:Type models:Script}">
-                                        <Border Cursor="Hand"
-                                                BorderBrush="{StaticResource DividerBrush}"
-                                                BorderThickness="0,0,0,1"
-                                                MouseLeftButtonUp="ScriptCard_Click">
-                                            <Border.Style>
-                                                <Style TargetType="Border">
-                                                    <Setter Property="Background" Value="Transparent" />
-                                                    <Style.Triggers>
-                                                        <Trigger Property="IsMouseOver" Value="True">
-                                                            <Setter Property="Background"
-                                                                    Value="{StaticResource BgHoverBrush}" />
-                                                        </Trigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Border.Style>
-                                            <Grid Margin="14,4">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
+                            <!-- Drag-to-reorder: the host is the drop target, the canvas
+                                 carries the insertion line between rows. -->
+                            <Grid x:Name="ScriptListHost" AllowDrop="True" Background="Transparent"
+                                  DragOver="ScriptList_DragOver"
+                                  DragLeave="ScriptList_DragLeave"
+                                  Drop="ScriptList_Drop">
+                                <ItemsControl x:Name="ScriptList" ItemsSource="{Binding Scripts}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:Script}">
+                                            <Border Cursor="Hand"
+                                                    BorderBrush="{StaticResource DividerBrush}"
+                                                    BorderThickness="0,0,0,1"
+                                                    MouseLeftButtonUp="ScriptCard_Click"
+                                                    PreviewMouseLeftButtonDown="ScriptRow_PreviewMouseLeftButtonDown"
+                                                    PreviewMouseMove="ScriptRow_PreviewMouseMove">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Background" Value="Transparent" />
+                                                        <Style.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter Property="Background"
+                                                                        Value="{StaticResource BgHoverBrush}" />
+                                                            </Trigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <Grid Margin="14,4">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
 
-                                                <Border Grid.Column="0"
-                                                        Background="{StaticResource PrimaryLightBrush}"
-                                                        CornerRadius="6" Padding="6,1"
-                                                        Margin="0,0,6,0"
-                                                        VerticalAlignment="Center"
-                                                        Visibility="{Binding HasImages, Converter={StaticResource BoolToVis}}">
-                                                    <TextBlock Text="有图" FontSize="10"
-                                                               Foreground="{StaticResource PrimaryBrush}" />
-                                                </Border>
+                                                    <Border Grid.Column="0"
+                                                            Background="{StaticResource PrimaryLightBrush}"
+                                                            CornerRadius="6" Padding="6,1"
+                                                            Margin="0,0,6,0"
+                                                            VerticalAlignment="Center"
+                                                            Visibility="{Binding HasImages, Converter={StaticResource BoolToVis}}">
+                                                        <TextBlock Text="有图" FontSize="10"
+                                                                   Foreground="{StaticResource PrimaryBrush}" />
+                                                    </Border>
 
-                                                <TextBlock Grid.Column="1" Text="{Binding Title}"
-                                                           FontSize="13" FontWeight="Bold"
-                                                           TextTrimming="CharacterEllipsis"
-                                                           MaxWidth="160"
-                                                           VerticalAlignment="Center"
-                                                           Visibility="{Binding Title, Converter={StaticResource StringToVis}}" />
+                                                    <controls:HighlightTextBlock Grid.Column="1"
+                                                               Source="{Binding Title}"
+                                                               Highlight="{Binding DataContext.SearchText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                                               HighlightBrush="{StaticResource SearchHighlightBrush}"
+                                                               FontSize="13" FontWeight="Bold"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               MaxWidth="160"
+                                                               VerticalAlignment="Center"
+                                                               Visibility="{Binding Title, Converter={StaticResource StringToVis}}" />
 
-                                                <TextBlock Grid.Column="2" Text="{Binding Preview}"
-                                                           Visibility="{Binding Preview, Converter={StaticResource StringToVis}}"
-                                                           FontSize="13"
-                                                           TextTrimming="CharacterEllipsis"
-                                                           Margin="4,0,0,0"
-                                                           VerticalAlignment="Center" />
+                                                    <controls:HighlightTextBlock Grid.Column="2"
+                                                               Source="{Binding Preview}"
+                                                               Highlight="{Binding DataContext.SearchText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                                               HighlightBrush="{StaticResource SearchHighlightBrush}"
+                                                               Visibility="{Binding Preview, Converter={StaticResource StringToVis}}"
+                                                               FontSize="13"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Margin="4,0,0,0"
+                                                               VerticalAlignment="Center" />
 
-                                                <Button Grid.Column="3"
-                                                        Content="&#xE712;" Width="26" Height="26"
-                                                        FontSize="13" Padding="0"
-                                                        Margin="8,0,0,0"
-                                                        Style="{StaticResource IconButton}"
-                                                        ToolTip="更多操作"
-                                                        Click="ScriptMenuButton_Click" />
-                                            </Grid>
+                                                    <Button Grid.Column="3"
+                                                            Content="&#xE712;" Width="26" Height="26"
+                                                            FontSize="13" Padding="0"
+                                                            Margin="8,0,0,0"
+                                                            Style="{StaticResource IconButton}"
+                                                            ToolTip="更多操作"
+                                                            Click="ScriptMenuButton_Click" />
+                                                </Grid>
 
-                                            <Border.ContextMenu>
-                                                <ContextMenu>
-                                                    <MenuItem Header="复制内容"
-                                                              Command="{Binding DataContext.CopyScriptCommand, Source={x:Reference mainWindow}}"
-                                                              CommandParameter="{Binding}" />
-                                                    <MenuItem Header="编辑"
-                                                              Command="{Binding DataContext.EditScriptCommand, Source={x:Reference mainWindow}}"
-                                                              CommandParameter="{Binding}" />
-                                                    <Separator />
-                                                    <MenuItem Header="删除"
-                                                              Command="{Binding DataContext.DeleteScriptCommand, Source={x:Reference mainWindow}}"
-                                                              CommandParameter="{Binding}" />
-                                                </ContextMenu>
-                                            </Border.ContextMenu>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                                <Border.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="复制内容"
+                                                                  Command="{Binding DataContext.CopyScriptCommand, Source={x:Reference mainWindow}}"
+                                                                  CommandParameter="{Binding}" />
+                                                        <MenuItem Header="编辑"
+                                                                  Command="{Binding DataContext.EditScriptCommand, Source={x:Reference mainWindow}}"
+                                                                  CommandParameter="{Binding}" />
+                                                        <Separator />
+                                                        <MenuItem Header="在上方插入新话术"
+                                                                  Command="{Binding DataContext.InsertAboveCommand, Source={x:Reference mainWindow}}"
+                                                                  CommandParameter="{Binding}" />
+                                                        <MenuItem Header="在下方插入新话术"
+                                                                  Command="{Binding DataContext.InsertBelowCommand, Source={x:Reference mainWindow}}"
+                                                                  CommandParameter="{Binding}" />
+                                                        <Separator />
+                                                        <MenuItem Header="删除"
+                                                                  Command="{Binding DataContext.DeleteScriptCommand, Source={x:Reference mainWindow}}"
+                                                                  CommandParameter="{Binding}" />
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Canvas IsHitTestVisible="False">
+                                    <Border x:Name="DropIndicator" Height="2"
+                                            Background="{StaticResource PrimaryBrush}"
+                                            CornerRadius="1" Visibility="Collapsed" />
+                                </Canvas>
+                            </Grid>
                         </ScrollViewer>
                     </Border>
                 </Grid>
@@ -555,7 +584,9 @@
 
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center"
                                                         Margin="10,0,8,0">
-                                                <TextBlock Text="{Binding Name}"
+                                                <controls:HighlightTextBlock Source="{Binding Name}"
+                                                           Highlight="{Binding DataContext.SearchText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                                           HighlightBrush="{StaticResource SearchHighlightBrush}"
                                                            FontSize="14"
                                                            TextTrimming="CharacterEllipsis" />
                                                 <TextBlock Text="{Binding DetailText}"
@@ -620,8 +651,15 @@
                                         Height="32" Padding="16,0" Margin="6,0,0,0"
                                         Click="SaveEditButton_Click" />
                             </StackPanel>
-                            <TextBlock Text="编辑话术" FontSize="17" FontWeight="SemiBold"
-                                       VerticalAlignment="Center" />
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{Binding EditHeading}" FontSize="17"
+                                           FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding EditInsertHint}" FontSize="11"
+                                           Foreground="{StaticResource TextHintBrush}"
+                                           Margin="0,2,0,0"
+                                           TextTrimming="CharacterEllipsis"
+                                           Visibility="{Binding EditInsertHint, Converter={StaticResource StringToVis}}" />
+                            </StackPanel>
                         </DockPanel>
 
                         <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="20,0,16,20">

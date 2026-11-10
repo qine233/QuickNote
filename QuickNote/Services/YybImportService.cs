@@ -168,30 +168,36 @@ public class YybImportService
 
         var count = 0;
         var sort = 0;
-        foreach (var row in rows.Skip(headerIndex + 1))
+
+        // One commit for the whole sheet; a per-row commit would fsync
+        // thousands of times and make the import take minutes.
+        _db.RunInTransaction(() =>
         {
-            row.TryGetValue(contentCol, out var content);
-            row.TryGetValue(titleCol, out var title);
-            row.TryGetValue(categoryCol, out var category);
-            if (string.IsNullOrWhiteSpace(content) && string.IsNullOrWhiteSpace(title)) continue;
-
-            content = content?.Trim() ?? "";
-            title = title?.Trim() ?? "";
-
-            var excelSegments = new List<ContentSegment>();
-            if (!string.IsNullOrWhiteSpace(content))
-                excelSegments.Add(ContentSegment.Text(content));
-
-            _db.InsertScript(new Script
+            foreach (var row in rows.Skip(headerIndex + 1))
             {
-                Title = title,
-                Content = content,
-                Category = category?.Trim() ?? "",
-                Segments = JsonSerializer.Serialize(excelSegments),
-                SortOrder = sort++,
-            });
-            count++;
-        }
+                row.TryGetValue(contentCol, out var content);
+                row.TryGetValue(titleCol, out var title);
+                row.TryGetValue(categoryCol, out var category);
+                if (string.IsNullOrWhiteSpace(content) && string.IsNullOrWhiteSpace(title)) continue;
+
+                content = content?.Trim() ?? "";
+                title = title?.Trim() ?? "";
+
+                var excelSegments = new List<ContentSegment>();
+                if (!string.IsNullOrWhiteSpace(content))
+                    excelSegments.Add(ContentSegment.Text(content));
+
+                _db.InsertScript(new Script
+                {
+                    Title = title,
+                    Content = content,
+                    Category = category?.Trim() ?? "",
+                    Segments = JsonSerializer.Serialize(excelSegments),
+                    SortOrder = sort++,
+                });
+                count++;
+            }
+        });
 
         return count;
     }
@@ -219,8 +225,9 @@ public class YybImportService
         }
 
         var count = 0;
-        using (var cmd = conn.CreateCommand())
+        _db.RunInTransaction(() =>
         {
+            using var cmd = conn.CreateCommand();
             // type = 1 rows are section dividers / headings, not real scripts.
             cmd.CommandText = """
                 SELECT parentSign, label, jsonValue, texts, images, position
@@ -286,7 +293,7 @@ public class YybImportService
                 });
                 count++;
             }
-        }
+        });
 
         return count;
     }

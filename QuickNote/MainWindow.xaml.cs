@@ -14,6 +14,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using QuickNote.Converters;
 using QuickNote.Models;
+using QuickNote.Services;
 using QuickNote.ViewModels;
 
 namespace QuickNote;
@@ -21,10 +22,16 @@ namespace QuickNote;
 public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel;
+    private readonly AppSettings _settings;
 
     public MainWindow()
     {
         InitializeComponent();
+
+        // Reopen where the window was left before anything is shown.
+        _settings = AppSettings.Load();
+        RestoreWindowBounds();
+
         _viewModel = new MainViewModel();
         DataContext = _viewModel;
 
@@ -114,10 +121,225 @@ public partial class MainWindow : Window
 
     private void ScriptCard_Click(object sender, MouseButtonEventArgs e)
     {
+        // A drag ends with a mouse-up as well; that must not copy the row.
+        if (_suppressScriptClick)
+        {
+            _suppressScriptClick = false;
+            e.Handled = true;
+            return;
+        }
+
         if (sender is FrameworkElement fe && fe.DataContext is Script script)
         {
             _viewModel.CopyScriptCommand.Execute(script);
         }
+    }
+
+    // ─── Drag a row to reorder ──────────────────────────────────────────
+
+    private const string ScriptDragFormat = "QuickNote.ScriptId";
+
+    private Point _dragStartPoint;
+    private Script? _dragCandidate;
+    private bool _suppressScriptClick;
+
+    private void ScriptRow_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _suppressScriptClick = false;
+        _dragCandidate = (sender as FrameworkElement)?.DataContext as Script;
+        _dragStartPoint = e.GetPosition(ScriptListHost);
+    }
+
+    private void ScriptRow_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_dragCandidate == null || e.LeftButton != MouseButtonState.Pressed)
+            return;
+
+        // Search results are a filtered subset; there is no meaningful drop
+        // position inside them.
+        if (!_viewModel.CanReorder)
+        {
+            _dragCandidate = null;
+            return;
+        }
+
+        var position = e.GetPosition(ScriptListHost);
+        if (Math.Abs(position.X - _dragStartPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(position.Y - _dragStartPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
+            return;
+
+        var script = _dragCandidate;
+        _dragCandidate = null;
+        if (sender is not FrameworkElement source)
+            return;
+
+        try
+        {
+            DragDrop.DoDragDrop(source, new DataObject(ScriptDragFormat, script.Id), DragDropEffects.Move);
+        }
+        finally
+        {
+            HideDropIndicator();
+            _suppressScriptClick = true;
+        }
+    }
+
+    private void ScriptList_DragOver(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(ScriptDragFormat) || !_viewModel.CanReorder)
+        {
+            HideDropIndicator();
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
+        AutoScrollDuringDrag(e.GetPosition(ScriptListScroll));
+
+        var (_, top) = ResolveDropTarget(e.GetPosition(ScriptListHost));
+        ShowDropIndicator(top);
+
+        e.Effects = DragDropEffects.Move;
+        e.Handled = true;
+    }
+
+    private void ScriptList_DragLeave(object sender, DragEventArgs e) => HideDropIndicator();
+
+    private void ScriptList_Drop(object sender, DragEventArgs e)
+    {
+        HideDropIndicator();
+
+        if (!e.Data.GetDataPresent(ScriptDragFormat) ||
+            e.Data.GetData(ScriptDragFormat) is not long scriptId)
+            return;
+
+        var script = _viewModel.Scripts.FirstOrDefault(candidate => candidate.Id == scriptId);
+        if (script == null)
+            return;
+
+        var sourceIndex = _viewModel.Scripts.IndexOf(script);
+        if (sourceIndex < 0)
+            return;
+
+        var (insertBefore, _) = ResolveDropTarget(e.GetPosition(ScriptListHost));
+
+        // The dragged row is still part of the list while dropping, so an
+        // insertion point below it shifts up by one.
+        var target = insertBefore > sourceIndex ? insertBefore - 1 : insertBefore;
+        if (target != sourceIndex)
+            _viewModel.ReorderScript(script, target);
+
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// Row index the insertion line should sit before, plus the y coordinate
+    /// of that line in the list's own coordinates.
+    /// </summary>
+    private (int Index, double Top) ResolveDropTarget(Point position)
+    {
+        var count = ScriptList.Items.Count;
+        var lastBottom = 0d;
+
+        for (var i = 0; i < count; i++)
+        {
+            if (ScriptList.ItemContainerGenerator.ContainerFromIndex(i) is not FrameworkElement container)
+                continue;
+
+            var top = container.TranslatePoint(new Point(0, 0), ScriptListHost).Y;
+            var bottom = top + container.ActualHeight;
+            lastBottom = bottom;
+
+            if (position.Y < top + (bottom - top) / 2)
+                return (i, top);
+        }
+
+        return (count, lastBottom);
+    }
+
+    private void ShowDropIndicator(double top)
+    {
+        DropIndicator.Width = Math.Max(0, ScriptListHost.ActualWidth - 24);
+        Canvas.SetLeft(DropIndicator, 12);
+        Canvas.SetTop(DropIndicator, Math.Max(0, top - 1));
+        DropIndicator.Visibility = Visibility.Visible;
+    }
+
+    private void HideDropIndicator() => DropIndicator.Visibility = Visibility.Collapsed;
+
+    private void AutoScrollDuringDrag(Point viewportPosition)
+    {
+        const double edge = 28;
+        const double step = 16;
+
+        // DragOver only fires while the pointer moves, which is exactly when a
+        // scroll should happen: holding still at the edge does nothing.
+        if (viewportPosition.Y < edge)
+            ScriptListScroll.ScrollToVerticalOffset(Math.Max(0, ScriptListScroll.VerticalOffset - step));
+        else if (viewportPosition.Y > ScriptListScroll.ViewportHeight - edge)
+            ScriptListScroll.ScrollToVerticalOffset(ScriptListScroll.VerticalOffset + step);
+    }
+
+    // ─── Window geometry ────────────────────────────────────────────────
+
+    private void RestoreWindowBounds()
+    {
+        var width = _settings.WindowWidth;
+        var height = _settings.WindowHeight;
+        if (width >= MinWidth && height >= MinHeight)
+        {
+            Width = Math.Min(width, SystemParameters.VirtualScreenWidth);
+            Height = Math.Min(height, SystemParameters.VirtualScreenHeight);
+        }
+
+        if (_settings.WindowLeft is not double left || _settings.WindowTop is not double top)
+            return;
+
+        var screen = new Rect(
+            SystemParameters.VirtualScreenLeft,
+            SystemParameters.VirtualScreenTop,
+            SystemParameters.VirtualScreenWidth,
+            SystemParameters.VirtualScreenHeight);
+
+        // The monitor may be gone since the last run; only restore a position
+        // that still leaves a usable part of the window on screen.
+        var visible = Rect.Intersect(screen, new Rect(left, top, Width, Height));
+        if (visible.IsEmpty || visible.Width < 120 || visible.Height < 60)
+            return;
+
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Left = left;
+        Top = top;
+
+        if (_settings.WindowMaximized)
+            WindowState = WindowState.Maximized;
+    }
+
+    private void SaveWindowBounds()
+    {
+        var bounds = WindowState == WindowState.Normal
+            ? new Rect(Left, Top, Width, Height)
+            : RestoreBounds;
+
+        _settings.WindowMaximized = WindowState == WindowState.Maximized;
+        _settings.WindowWidth = bounds.Width;
+        _settings.WindowHeight = bounds.Height;
+
+        // Docked to the screen edge the window sits in a thin sliver; keep the
+        // last real position instead of saving that.
+        if (!_dockEnabled || _settings.WindowLeft == null)
+        {
+            _settings.WindowLeft = bounds.Left;
+            _settings.WindowTop = bounds.Top;
+        }
+
+        _settings.Save();
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        SaveWindowBounds();
+        base.OnClosing(e);
     }
 
     // ─── Tabs / file rows ───────────────────────────────────────────────

@@ -37,6 +37,11 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _selectedCategory;
         set
         {
+            // Category chips re-select the same value while the list is being
+            // merged; reloading for that would thrash the whole list.
+            if (value != null && value == _selectedCategory)
+                return;
+
             _selectedCategory = value ?? "全部";
             OnPropertyChanged();
             LoadScripts();
@@ -49,6 +54,9 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _searchText;
         set
         {
+            if (value == _searchText)
+                return;
+
             _searchText = value;
             OnPropertyChanged();
             if (IsFilesTab)
@@ -158,7 +166,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         ? _indexTruncated
             ? $"文件较多，仅显示前 {MaxIndexedFiles} 个"
             : "点击文件即可复制 · 右键文件夹可移除"
-        : "点击复制 · 右键编辑";
+        : "点击复制 · 拖动排序 · 右键插入 / 编辑";
 
     // ─── Edit dialog state ──────────────────────────────────────────────
 
@@ -170,6 +178,18 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private bool _isEditing;
     public bool IsEditing { get => _isEditing; set { _isEditing = value; OnPropertyChanged(); } }
+
+    private string _editHeading = "新建话术";
+    /// <summary>Dialog title: new, editing, or inserting between two rows.</summary>
+    public string EditHeading { get => _editHeading; private set { _editHeading = value; OnPropertyChanged(); } }
+
+    private string _editInsertHint = "";
+    /// <summary>Where a new script will land; empty unless inserting.</summary>
+    public string EditInsertHint { get => _editInsertHint; private set { _editInsertHint = value; OnPropertyChanged(); } }
+
+    // Where "insert above/below" puts the next script; 0 means "append".
+    private long _insertAnchorId;
+    private bool _insertAbove;
 
     /// <summary>
     /// Ordered content of the script being edited, loaded into the rich editor.
@@ -185,10 +205,18 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private bool IsSearching => !string.IsNullOrWhiteSpace(SearchText);
 
+    /// <summary>
+    /// Whether rows may be dragged into a new order. Search results are a
+    /// filtered subset, so dropping inside them would have no clear meaning.
+    /// </summary>
+    public bool CanReorder => !IsSearching;
+
     // ─── Commands ────────────────────────────────────────────────────────
 
     public ICommand CopyScriptCommand { get; }
     public ICommand AddScriptCommand { get; }
+    public ICommand InsertAboveCommand { get; }
+    public ICommand InsertBelowCommand { get; }
     public ICommand EditScriptCommand { get; }
     public ICommand DeleteScriptCommand { get; }
     public ICommand CancelEditCommand { get; }
@@ -213,6 +241,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
         CopyScriptCommand = new RelayCommand(obj => CopyScript(obj as Script));
         AddScriptCommand = new RelayCommand(AddScript);
+        InsertAboveCommand = new RelayCommand(obj => StartInsert(obj as Script, above: true));
+        InsertBelowCommand = new RelayCommand(obj => StartInsert(obj as Script, above: false));
         EditScriptCommand = new RelayCommand(obj => EditScript(obj as Script));
         DeleteScriptCommand = new RelayCommand(obj => DeleteScript(obj as Script));
         CancelEditCommand = new RelayCommand(CancelEdit);
@@ -242,12 +272,29 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         LoadScripts();
     }
 
+    /// <summary>
+    /// Merges the stored categories into the chip list. Clearing the list would
+    /// reset the chip selection (and reload the list) every time a script is
+    /// saved, so entries are added, moved and removed in place instead.
+    /// </summary>
     private void LoadCategories()
     {
-        Categories.Clear();
-        Categories.Add("全部");
-        foreach (var cat in _db.GetAllCategories())
-            Categories.Add(cat);
+        var names = new List<string> { "全部" };
+        names.AddRange(_db.GetAllCategories());
+
+        for (var i = Categories.Count - 1; i >= 0; i--)
+        {
+            if (!names.Contains(Categories[i]))
+                Categories.RemoveAt(i);
+        }
+
+        for (var i = 0; i < names.Count; i++)
+        {
+            if (i >= Categories.Count)
+                Categories.Add(names[i]);
+            else if (Categories[i] != names[i])
+                Categories.Insert(i, names[i]);
+        }
     }
 
     private void LoadScripts()
@@ -260,6 +307,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         Scripts.Clear();
         LoadMoreScripts();
         OnPropertyChanged(nameof(TotalScriptCount));
+        OnPropertyChanged(nameof(CanReorder));
         UpdateFooter();
     }
 
@@ -281,6 +329,34 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         foreach (var s in page)
             Scripts.Add(s);
         _renderedCount = Scripts.Count;
+    }
+
+    /// <summary>
+    /// Moves a script to a new index in the visible list and stores that order.
+    /// </summary>
+    public void ReorderScript(Script script, int newIndex)
+    {
+        var oldIndex = Scripts.IndexOf(script);
+        if (oldIndex < 0 || newIndex < 0 || newIndex >= Scripts.Count || oldIndex == newIndex)
+            return;
+
+        // Remove + insert rather than Move: ItemsControl regenerates the rows
+        // reliably, and a reorder happens at most once per drag.
+        Scripts.RemoveAt(oldIndex);
+        Scripts.Insert(newIndex, script);
+
+        var before = newIndex > 0 ? Scripts[newIndex - 1] : null;
+        var after = newIndex + 1 < Scripts.Count ? Scripts[newIndex + 1] : null;
+
+        try
+        {
+            _db.MoveScript(script.Id, before?.Id, after?.Id);
+        }
+        catch (Exception ex)
+        {
+            ShowToast($"排序没能保存：{ex.Message}");
+            RefreshAll();
+        }
     }
 
     // ─── Anti-flood: throttle clipboard operations ──────────────────────
@@ -626,6 +702,9 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         EditCategory = SelectedCategory == "全部" ? "" : SelectedCategory;
         _editSourceSegments = [];
         _editingScriptId = 0;
+        _insertAnchorId = 0;
+        EditHeading = "新建话术";
+        EditInsertHint = "";
         IsEditing = true;
     }
 
@@ -636,8 +715,36 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         EditCategory = script.Category;
         _editSourceSegments = script.SegmentsList.ToList();
         _editingScriptId = script.Id;
+        _insertAnchorId = 0;
+        EditHeading = "编辑话术";
+        EditInsertHint = "";
         IsEditing = true;
     }
+
+    /// <summary>
+    /// Opens an empty editor that will be saved directly above or below
+    /// <paramref name="anchor"/> instead of at the end of the list.
+    /// </summary>
+    private void StartInsert(Script? anchor, bool above)
+    {
+        if (anchor == null) return;
+
+        EditTitle = string.Empty;
+        EditCategory = anchor.Category;
+        _editSourceSegments = [];
+        _editingScriptId = 0;
+        _insertAnchorId = anchor.Id;
+        _insertAbove = above;
+
+        var name = !string.IsNullOrWhiteSpace(anchor.Title) ? anchor.Title : anchor.Preview;
+        var where = string.IsNullOrWhiteSpace(name) ? "该话术" : $"「{Shorten(name, 14)}」";
+        EditHeading = "插入话术";
+        EditInsertHint = $"将插入到{where}{(above ? "上方" : "下方")}";
+        IsEditing = true;
+    }
+
+    private static string Shorten(string text, int max) =>
+        text.Length <= max ? text : text[..max] + "…";
 
     /// <summary>
     /// Persists the ordered text/image items produced by the rich editor.
@@ -697,19 +804,34 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         var imageJson = JsonSerializer.Serialize(storedNames);
         var segmentsJson = JsonSerializer.Serialize(segments);
 
+        var isNew = _editingScriptId == 0;
+        var anchorId = _insertAnchorId;
+        var above = _insertAbove;
+        Script? inserted = null;
+
         try
         {
-            if (_editingScriptId == 0)
+            if (isNew)
             {
-                _db.InsertScript(new Script
+                inserted = new Script
                 {
                     Title = EditTitle.Trim(),
                     Content = content,
                     Category = EditCategory.Trim(),
                     ImagePaths = imageJson,
                     Segments = segmentsJson,
-                    SortOrder = _totalScriptCount,
-                });
+                };
+
+                if (anchorId != 0)
+                {
+                    // Slot it between the rows around the one the user picked.
+                    _db.InsertScriptNear(inserted, anchorId, above);
+                }
+                else
+                {
+                    inserted.SortOrder = _db.NextSortOrder();
+                    _db.InsertScript(inserted);
+                }
             }
             else
             {
@@ -739,8 +861,66 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         }
 
         IsEditing = false;
-        RefreshAll();
-        ShowToast(_editingScriptId == 0 ? "已保存" : "已更新");
+        _insertAnchorId = 0;
+
+        // Keep the chip list current without clearing the selected category.
+        LoadCategories();
+
+        if (inserted != null && TryShowInserted(inserted, anchorId, above))
+            ShowToast(anchorId != 0 ? "已插入" : "已保存");
+        else
+        {
+            RefreshAll();
+            ShowToast(isNew ? "已保存" : "已更新");
+        }
+    }
+
+    /// <summary>
+    /// Puts a saved script straight into the list on screen instead of
+    /// reloading from page one. Only safe while the loaded page is contiguous
+    /// with the database order, which is why a search or a category mismatch
+    /// falls back to a normal reload.
+    /// </summary>
+    private bool TryShowInserted(Script script, long anchorId, bool above)
+    {
+        if (IsSearching)
+            return false;
+
+        var category = SelectedCategory;
+        if (!string.IsNullOrEmpty(category) && category != "全部" &&
+            !string.Equals(script.Category, category, StringComparison.Ordinal))
+            return false;
+
+        if (anchorId == 0)
+        {
+            // Appending is only visually correct once every row is loaded.
+            if (_renderedCount < _totalScriptCount)
+                return false;
+
+            Scripts.Add(script);
+        }
+        else
+        {
+            var anchorIndex = -1;
+            for (var i = 0; i < Scripts.Count; i++)
+            {
+                if (Scripts[i].Id == anchorId)
+                {
+                    anchorIndex = i;
+                    break;
+                }
+            }
+            if (anchorIndex < 0)
+                return false;
+
+            Scripts.Insert(above ? anchorIndex : anchorIndex + 1, script);
+        }
+
+        _totalScriptCount++;
+        _renderedCount = Scripts.Count;
+        OnPropertyChanged(nameof(TotalScriptCount));
+        UpdateFooter();
+        return true;
     }
 
     private void CancelEdit()
@@ -836,7 +1016,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 using var db = new DatabaseService();
                 var yyb = new YybImportService(db);
-                return ext switch
+                var imported = ext switch
                 {
                     ".json" => db.ImportFromJson(path),
                     ".ebk" => yyb.ImportFromEbk(path),
@@ -846,6 +1026,11 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
                         "暂不支持旧版 .xls，请在 Excel 中另存为 .xlsx 后再导入。"),
                     _ => throw new NotSupportedException("不支持的文件类型。"),
                 };
+
+                // Imported rows carry the source file's numbering, which would
+                // leave no room to insert between them later.
+                db.NormalizeSortOrders();
+                return imported;
             });
 
             RefreshAll();
