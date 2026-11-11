@@ -28,12 +28,14 @@ public class DatabaseService : IDisposable
     // rebuilt once on the next start instead of silently drifting.
     private const string SearchIndexVersion = "1";
 
+    /// <summary>File name of the SQLite database inside <see cref="AppDataDir"/>.</summary>
+    public const string DatabaseFileName = "scripts.db";
+
     /// <summary>
-    /// Base directory for app data (db + images).
+    /// Base directory for the data (db + images). Chosen per settings: this
+    /// account only, every account on the machine, or a folder the user picked.
     /// </summary>
-    public static string AppDataDir { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "QuickNote");
+    public static string AppDataDir { get; } = DataLocation.Resolve(AppSettings.Current);
 
     /// <summary>
     /// Directory where script images are stored.
@@ -51,15 +53,20 @@ public class DatabaseService : IDisposable
         Directory.CreateDirectory(AppDataDir);
         Directory.CreateDirectory(ImagesDir);
 
-        var dbPath = Path.Combine(AppDataDir, "scripts.db");
+        var dbPath = Path.Combine(AppDataDir, DatabaseFileName);
         _connection = new SqliteConnection($"Data Source={dbPath}");
         _connection.Open();
 
-        // WAL lets several QuickNote processes read/write the same db safely;
-        // busy_timeout makes concurrent writers wait instead of throwing.
+        // WAL lets several QuickNote processes on this machine read and write
+        // the same db safely, and busy_timeout makes a concurrent writer wait
+        // for the lock instead of throwing. WAL needs shared memory, which does
+        // not work over SMB, so a network folder keeps the rollback journal.
+        var network = DataLocation.IsNetworkPath(dbPath);
         using (var pragma = _connection.CreateCommand())
         {
-            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA synchronous=NORMAL;";
+            pragma.CommandText = network
+                ? "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA busy_timeout=10000;"
+                : "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=10000;";
             pragma.ExecuteNonQuery();
         }
 
@@ -473,6 +480,69 @@ public class DatabaseService : IDisposable
             return after.Value - SortStep;
 
         return null;
+    }
+
+    // ─── Sharing between accounts ───────────────────────────────────────
+
+    /// <summary>
+    /// Counter that changes whenever another connection commits to the same
+    /// database. Polling it is how a running window notices that another
+    /// Windows account added or edited a script.
+    /// </summary>
+    public long GetDataVersion()
+    {
+        using var cmd = CreateCommand();
+        cmd.CommandText = "PRAGMA data_version";
+        return Convert.ToInt64(cmd.ExecuteScalar());
+    }
+
+    /// <summary>
+    /// Writes a consistent copy of the database and its images into an empty
+    /// folder. Used when the data location is switched to another scope; the
+    /// original files are left untouched.
+    /// </summary>
+    public void CopyTo(string targetDirectory)
+    {
+        Directory.CreateDirectory(targetDirectory);
+
+        var targetDb = Path.Combine(targetDirectory, DatabaseFileName);
+        if (File.Exists(targetDb))
+            throw new IOException("目标位置已经有 scripts.db，未覆盖。");
+
+        // Images first, database last: the database file is what marks the
+        // target as complete, so a half-finished copy is never used.
+        var targetImages = Path.Combine(targetDirectory, "images");
+        Directory.CreateDirectory(targetImages);
+        foreach (var source in Directory.EnumerateFiles(ImagesDir))
+        {
+            var destination = Path.Combine(targetImages, Path.GetFileName(source));
+            if (!File.Exists(destination))
+                File.Copy(source, destination);
+        }
+
+        try
+        {
+            using var cmd = CreateCommand();
+            // VACUUM INTO writes a clean, fully check-pointed copy of the live
+            // database, which a plain file copy of a WAL database would not be.
+            cmd.CommandText = "VACUUM INTO $path";
+            cmd.Parameters.AddWithValue("$path", targetDb);
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception)
+        {
+            // A failed VACUUM can leave a partial file behind; delete it so the
+            // next attempt starts clean instead of "using" a broken database.
+            try
+            {
+                if (File.Exists(targetDb))
+                    File.Delete(targetDb);
+            }
+            catch (IOException)
+            {
+            }
+            throw;
+        }
     }
 
     // ─── CRUD ───────────────────────────────────────────────────────────

@@ -131,6 +131,8 @@
 
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                                 VerticalAlignment="Center">
+                        <Button Content="&#xE713;" Style="{StaticResource WindowButton}"
+                                Click="SettingsButton_Click" ToolTip="设置（数据位置）" />
                         <Button Content="&#xE921;" Style="{StaticResource WindowButton}"
                                 Click="MinimizeButton_Click" ToolTip="最小化" />
                         <Button Content="&#xE922;" Style="{StaticResource WindowButton}"

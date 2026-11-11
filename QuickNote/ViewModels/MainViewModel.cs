@@ -1,10 +1,12 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Threading;
 using QuickNote.Models;
 using QuickNote.Services;
 using Microsoft.Win32;
@@ -158,9 +160,16 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public string SearchHint => IsFilesTab ? "搜索文件" : "搜索话术";
 
+    /// <summary>
+    /// True when the database lives outside this account's profile, i.e. other
+    /// Windows accounts on this computer see the same scripts.
+    /// </summary>
+    public bool IsSharedData =>
+        !DataLocation.SamePath(DatabaseService.AppDataDir, DataLocation.CurrentUserDirectory);
+
     public string FooterText => IsFilesTab
         ? $"共 {IndexedFiles.Count} 个文件"
-        : $"共 {TotalScriptCount} 条话术";
+        : $"共 {TotalScriptCount} 条话术{(IsSharedData ? " · 本机共享" : "")}";
 
     public string FooterHint => IsFilesTab
         ? _indexTruncated
@@ -232,12 +241,17 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand RemoveFolderCommand { get; }
     public ICommand RefreshFolderCommand { get; }
     public ICommand CopyFileCommand { get; }
+    public ICommand OpenSettingsCommand { get; }
 
     // ─── Constructor ────────────────────────────────────────────────────
 
     public MainViewModel()
     {
         _db = new DatabaseService();
+
+        // Finish a merge started from the settings dialog before anything is
+        // read, so the shared database already holds both accounts' scripts.
+        ApplyPendingImport();
 
         CopyScriptCommand = new RelayCommand(obj => CopyScript(obj as Script));
         AddScriptCommand = new RelayCommand(AddScript);
@@ -249,7 +263,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         ExportCommand = new RelayCommand(Export);
         ImportCommand = new RelayCommand(Import);
         AddCategoryCommand = new RelayCommand(AddCategory);
-        RefreshCommand = new RelayCommand(RefreshAll);
+        RefreshCommand = new RelayCommand(_ => RefreshAll());
         OpenClipboardCommand = new RelayCommand(() => IsClipboardOpen = true);
         CloseClipboardCommand = new RelayCommand(() => IsClipboardOpen = false);
         CopyClipboardItemCommand = new RelayCommand(obj => CopyClipboardEntry(obj as ClipboardEntry));
@@ -258,18 +272,39 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         RemoveFolderCommand = new RelayCommand(obj => RemoveFolder(obj as FolderCategory));
         RefreshFolderCommand = new RelayCommand(LoadFolderIndex);
         CopyFileCommand = new RelayCommand(obj => CopyFile(obj as IndexedFile));
+        OpenSettingsCommand = new RelayCommand(_ => OpenSettings());
 
         // Clipboard history loads only when the panel is opened.
         RefreshAll();
         LoadFolderCategories();
+
+        // Several Windows accounts can share one database; poll the file for
+        // commits from another process so the list does not go stale.
+        _dataVersion = CurrentDataVersion();
+        _refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(3),
+        };
+        _refreshTimer.Tick += (_, _) => CheckForExternalChanges();
+        _refreshTimer.Start();
     }
+
+    private readonly DispatcherTimer _refreshTimer;
+    private long _dataVersion;
 
     // ─── Data loading ───────────────────────────────────────────────────
 
-    public void RefreshAll()
+    /// <summary>
+    /// Raised around a reload that should keep the scroll position, so the view
+    /// can put the list back where the user left it.
+    /// </summary>
+    public event EventHandler? ScriptsReloading;
+    public event EventHandler? ScriptsReloaded;
+
+    public void RefreshAll(bool preserveScroll = false)
     {
         LoadCategories();
-        LoadScripts();
+        LoadScripts(preserveScroll);
     }
 
     /// <summary>
@@ -297,8 +332,11 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private void LoadScripts()
+    private void LoadScripts(bool preserveScroll = false)
     {
+        if (preserveScroll)
+            ScriptsReloading?.Invoke(this, EventArgs.Empty);
+
         _totalScriptCount = IsSearching
             ? _db.CountSearchScripts(SearchText)
             : _db.CountScripts(SelectedCategory);
@@ -309,6 +347,48 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(TotalScriptCount));
         OnPropertyChanged(nameof(CanReorder));
         UpdateFooter();
+
+        if (preserveScroll)
+            ScriptsReloaded?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Data version of the database file. It changes when another QuickNote
+    /// window (another Windows account) commits, which is the signal to reload.
+    /// </summary>
+    private long CurrentDataVersion()
+    {
+        try
+        {
+            return _db.GetDataVersion();
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
+    }
+
+    private void CheckForExternalChanges()
+    {
+        // Never pull the list out from under an open editor or a running import.
+        if (IsEditing || IsImporting)
+            return;
+
+        long version;
+        try
+        {
+            version = _db.GetDataVersion();
+        }
+        catch (Exception)
+        {
+            return;
+        }
+
+        if (version == _dataVersion)
+            return;
+
+        _dataVersion = version;
+        RefreshAll(preserveScroll: true);
     }
 
     private void UpdateFooter()
@@ -1065,6 +1145,175 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    // ─── Data location (shared between Windows accounts) ────────────────
+
+    /// <summary>
+    /// Lets the user move the scripts to another scope: this account only,
+    /// every account on the machine, or a folder they picked. Existing data is
+    /// copied across (never moved), then the app restarts on the new folder.
+    /// </summary>
+    private void OpenSettings()
+    {
+        var dialog = new Views.SettingsDialog(AppSettings.Current, DatabaseService.AppDataDir)
+        {
+            Owner = Application.Current.MainWindow,
+        };
+
+        if (dialog.ShowDialog() != true)
+            return;
+
+        var scope = dialog.SelectedScope;
+        var custom = dialog.SelectedCustomDirectory;
+        var target = scope switch
+        {
+            DataScope.AllUsers => DataLocation.AllUsersDirectory,
+            DataScope.Custom => (custom ?? string.Empty).Trim(),
+            _ => DataLocation.CurrentUserDirectory,
+        };
+
+        if (target.Length == 0)
+            return;
+
+        if (DataLocation.SamePath(target, DatabaseService.AppDataDir))
+        {
+            SaveDataScope(scope, custom);
+            ShowToast("设置已保存");
+            return;
+        }
+
+        var targetDatabase = Path.Combine(target, DatabaseService.DatabaseFileName);
+        var targetHasData = File.Exists(targetDatabase);
+
+        var merge = false;
+        if (targetHasData)
+        {
+            var answer = MessageBox.Show(
+                "目标位置已经有话术数据。\n\n" +
+                "「是」把当前这份导入过去（合并）\n" +
+                "「否」只使用目标位置的数据，当前这份留在原处\n" +
+                "「取消」不切换",
+                "目标位置已有数据",
+                MessageBoxButton.YesNoCancel,
+                MessageBoxImage.Question);
+
+            if (answer == MessageBoxResult.Cancel)
+                return;
+
+            merge = answer == MessageBoxResult.Yes;
+        }
+
+        // Creating the folder and opening it up to every account has to happen
+        // before anything is written, so the files inherit the permission.
+        if (!DataLocation.TryPrepare(target, out var prepareError))
+        {
+            MessageBox.Show(
+                $"无法使用这个位置：{prepareError}\n\n如果选择的是「本机所有用户共享」，请确认当前账号有权限写入。",
+                "设置",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        string? mergeFile = null;
+        if (merge)
+        {
+            // Export now (the old database is still open), import on the next
+            // start when the app is already pointing at the shared folder.
+            try
+            {
+                mergeFile = Path.Combine(Path.GetTempPath(), $"QuickNote-merge-{Guid.NewGuid():N}.json");
+                _db.ExportToJson(mergeFile);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"导出当前话术失败：{ex.Message}", "设置", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+        }
+        else if (!targetHasData)
+        {
+            try
+            {
+                _db.CopyTo(target);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"复制数据失败：{ex.Message}", "设置", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+        }
+
+        SaveDataScope(scope, custom, mergeFile);
+
+        MessageBox.Show(
+            "数据位置已切换，QuickNote 将重新启动。\n\n原位置的数据仍然保留，确认无误后可以自行删除。",
+            "已切换",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+
+        RestartApp();
+    }
+
+    private static void SaveDataScope(DataScope scope, string? customDirectory, string? pendingImport = null)
+    {
+        AppSettings.Current.DataScope = scope;
+        AppSettings.Current.CustomDataDirectory = customDirectory;
+        AppSettings.Current.PendingImport = pendingImport;
+        AppSettings.Current.Save();
+    }
+
+    /// <summary>
+    /// Imports the scripts exported when switching to a shared database that
+    /// already had data. The marker is cleared before importing, so a crash
+    /// mid-way cannot import the same scripts twice.
+    /// </summary>
+    private void ApplyPendingImport()
+    {
+        var path = AppSettings.Current.PendingImport;
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        AppSettings.Current.PendingImport = null;
+        AppSettings.Current.Save();
+
+        try
+        {
+            if (!File.Exists(path))
+                return;
+
+            _db.ImportFromJson(path);
+            _db.NormalizeSortOrders();
+            File.Delete(path);
+        }
+        catch (Exception)
+        {
+            // Best effort: the exported file stays on disk for a manual import.
+        }
+    }
+
+    /// <summary>
+    /// Starts a second instance, which opens the new data folder, then closes
+    /// this one. A debug run is hosted by dotnet, so it only shuts down.
+    /// </summary>
+    private static void RestartApp()
+    {
+        var exe = Environment.ProcessPath;
+        if (exe != null &&
+            !string.Equals(Path.GetFileNameWithoutExtension(exe), "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
+            }
+            catch (Exception)
+            {
+                // The data is in place either way; the next manual start picks it up.
+            }
+        }
+
+        Application.Current.Shutdown();
+    }
+
     // ─── Toast notification ─────────────────────────────────────────────
 
     private string? _toastMessage;
@@ -1101,6 +1350,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public void Dispose()
     {
+        _refreshTimer?.Stop();
         _indexCts?.Cancel();
         _db?.Dispose();
     }

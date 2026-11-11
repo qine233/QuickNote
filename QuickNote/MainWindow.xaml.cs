@@ -29,13 +29,17 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         // Reopen where the window was left before anything is shown.
-        _settings = AppSettings.Load();
+        _settings = AppSettings.Current;
         RestoreWindowBounds();
 
         _viewModel = new MainViewModel();
         DataContext = _viewModel;
 
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
+        _viewModel.ScriptsReloading += (_, _) => _savedScrollOffset = ScriptListScroll.VerticalOffset;
+        _viewModel.ScriptsReloaded += (_, _) => Dispatcher.BeginInvoke(
+            new Action(() => ScriptListScroll.ScrollToVerticalOffset(_savedScrollOffset)),
+            DispatcherPriority.Loaded);
         DataObject.AddPastingHandler(ContentEditor, OnEditorPaste);
         ContentEditor.AddHandler(PreviewMouseLeftButtonDownEvent,
             new MouseButtonEventHandler(Editor_PreviewMouseDown), handledEventsToo: true);
@@ -89,6 +93,9 @@ public partial class MainWindow : Window
     private void MinimizeButton_Click(object sender, RoutedEventArgs e) =>
         WindowState = WindowState.Minimized;
 
+    private void SettingsButton_Click(object sender, RoutedEventArgs e) =>
+        _viewModel.OpenSettingsCommand.Execute(null);
+
     private void MaximizeButton_Click(object sender, RoutedEventArgs e) =>
         ToggleMaximize();
 
@@ -138,6 +145,8 @@ public partial class MainWindow : Window
     // ─── Drag a row to reorder ──────────────────────────────────────────
 
     private const string ScriptDragFormat = "QuickNote.ScriptId";
+
+    private double _savedScrollOffset;
 
     private Point _dragStartPoint;
     private Script? _dragCandidate;
@@ -915,6 +924,13 @@ public partial class MainWindow : Window
             };
             dockItem.CheckedChanged += (_, _) => SetDockEnabled(dockItem.Checked);
             menu.Items.Add(dockItem);
+            menu.Items.Add("数据位置…", null, (_, _) =>
+            {
+                Show();
+                WindowState = WindowState.Normal;
+                Activate();
+                _viewModel.OpenSettingsCommand.Execute(null);
+            });
             menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
             menu.Items.Add("退出", null, (_, _) =>
             {
