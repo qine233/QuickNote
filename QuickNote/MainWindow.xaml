@@ -335,11 +335,14 @@
                                 <ItemsControl x:Name="ScriptList" ItemsSource="{Binding Scripts}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="{x:Type models:Script}">
+                                            <!-- A drag only arms after a 3.5 s hold (see
+                                 ScriptRow_PreviewMouseMove); a tap still just copies. -->
                                             <Border Cursor="Hand"
                                                     BorderBrush="{StaticResource DividerBrush}"
                                                     BorderThickness="0,0,0,1"
                                                     MouseLeftButtonUp="ScriptCard_Click"
                                                     PreviewMouseLeftButtonDown="ScriptRow_PreviewMouseLeftButtonDown"
+                                                    PreviewMouseLeftButtonUp="ScriptRow_PreviewMouseLeftButtonUp"
                                                     PreviewMouseMove="ScriptRow_PreviewMouseMove">
                                                 <Border.Style>
                                                     <Style TargetType="Border">

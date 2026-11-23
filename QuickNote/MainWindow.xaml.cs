@@ -46,6 +46,7 @@ public partial class MainWindow : Window
 
         SetupTrayIcon();
         _dockTimer.Tick += DockTimer_Tick;
+        _dragArmTimer.Tick += DragArmTimer_Tick;
     }
 
     // No clipboard monitor: the app never reads what you copied elsewhere. The
@@ -146,23 +147,79 @@ public partial class MainWindow : Window
 
     private const string ScriptDragFormat = "QuickNote.ScriptId";
 
+    // A row is also the copy trigger, so a drag must never start from an
+    // ordinary click that happens to wiggle. The pointer has to rest on the row
+    // for this long first; the cursor changing under it is the only cue.
+    private const int DragArmMilliseconds = 3500;
+
     private double _savedScrollOffset;
 
     private Point _dragStartPoint;
     private Script? _dragCandidate;
     private bool _suppressScriptClick;
+    private FrameworkElement? _pressedRow;
+    private DateTime _pressAt = DateTime.MinValue;
+
+    // Fires while the pointer is still down but has not moved, so a row held
+    // for 3.5 s and then dragged still gets its arming cue.
+    private readonly DispatcherTimer _dragArmTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(DragArmMilliseconds),
+    };
 
     private void ScriptRow_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         _suppressScriptClick = false;
         _dragCandidate = (sender as FrameworkElement)?.DataContext as Script;
         _dragStartPoint = e.GetPosition(ScriptListHost);
+        _pressedRow = sender as FrameworkElement;
+        _pressAt = DateTime.UtcNow;
+
+        _dragArmTimer.Stop();
+        if (_dragCandidate != null && _viewModel.CanReorder)
+            _dragArmTimer.Start();
+    }
+
+    private void DragArmTimer_Tick(object? sender, EventArgs e)
+    {
+        _dragArmTimer.Stop();
+
+        if (_dragCandidate == null || _pressedRow == null || !_viewModel.CanReorder ||
+            Mouse.LeftButton != MouseButtonState.Pressed)
+            return;
+
+        _pressedRow.Cursor = Cursors.SizeAll;
+    }
+
+    private void ScriptRow_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => EndPress();
+
+    /// <summary>
+    /// Drops the pending-drag state, including the cursor it may have set. The
+    /// row's own cursor is Hand in XAML, so restoring it by value is exact.
+    /// </summary>
+    private void EndPress()
+    {
+        _dragArmTimer.Stop();
+
+        if (_pressedRow != null)
+            _pressedRow.Cursor = Cursors.Hand;
+
+        _pressedRow = null;
+        _dragCandidate = null;
+        _pressAt = DateTime.MinValue;
     }
 
     private void ScriptRow_PreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (_dragCandidate == null || e.LeftButton != MouseButtonState.Pressed)
+        if (_dragCandidate == null)
             return;
+
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            // Released outside the row, so no mouse-up handler ran.
+            EndPress();
+            return;
+        }
 
         // Search results are a filtered subset; there is no meaningful drop
         // position inside them.
@@ -172,13 +229,17 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Too short a hold: keep the press alive, the drag arms as soon as the
+        // pointer moves once the interval has passed.
+        if ((DateTime.UtcNow - _pressAt).TotalMilliseconds < DragArmMilliseconds)
+            return;
+
         var position = e.GetPosition(ScriptListHost);
         if (Math.Abs(position.X - _dragStartPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
             Math.Abs(position.Y - _dragStartPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
             return;
 
         var script = _dragCandidate;
-        _dragCandidate = null;
         if (sender is not FrameworkElement source)
             return;
 
@@ -189,6 +250,7 @@ public partial class MainWindow : Window
         finally
         {
             HideDropIndicator();
+            EndPress();
             _suppressScriptClick = true;
         }
     }
@@ -948,6 +1010,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _dockTimer.Stop();
+        _dragArmTimer.Stop();
         _trayIcon?.Dispose();
         _viewModel.Dispose();
         base.OnClosed(e);

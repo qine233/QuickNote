@@ -175,7 +175,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         ? _indexTruncated
             ? $"文件较多，仅显示前 {MaxIndexedFiles} 个"
             : "点击文件即可复制 · 右键文件夹可移除"
-        : "点击复制 · 拖动排序 · 右键插入 / 编辑";
+        : "点击复制 · 长按 3.5 秒可拖动排序 · 右键插入 / 编辑";
 
     // ─── Edit dialog state ──────────────────────────────────────────────
 
@@ -466,8 +466,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             var segments = script.SegmentsList;
             var result = RichClipboardService.Copy(segments);
 
-            // Record it now, with its segments: the text poller would otherwise
-            // notice the copy a second later and file it as text only.
+            // Record the copy together with its segments: this is the only thing
+            // that fills the history panel, and text alone would lose the images.
             RecordCopy(result.PlainText, result.CopiedSegments.Count > 0 ? result.CopiedSegments : null);
 
             var what = result switch
