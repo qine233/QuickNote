@@ -169,6 +169,10 @@ public partial class MainWindow : Window
 
     private void ScriptRow_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        // A press released outside the list reaches no row's mouse-up handler,
+        // so clear the previous row's arming cursor before starting a new one.
+        EndPress();
+
         _suppressScriptClick = false;
         _dragCandidate = (sender as FrameworkElement)?.DataContext as Script;
         _dragStartPoint = e.GetPosition(ScriptListHost);
