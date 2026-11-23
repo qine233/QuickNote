@@ -20,6 +20,10 @@ namespace QuickNote.Services;
 /// DataObject: the payload for a registered (non-standard) format ends up as
 /// exactly the bytes we allocate, with no serializer in between guessing at
 /// the encoding. That is what makes the CF_HTML byte offsets reliable.
+///
+/// Since the data folder can be pointed at a shared or network location, an
+/// image that does not live on a local disk is copied into a staging folder
+/// under TEMP first, and the paste references that copy.
 /// </summary>
 public static class RichClipboardService
 {
@@ -51,11 +55,19 @@ public static class RichClipboardService
     /// Carrying the order end to end is what makes the paste come out the way
     /// the script was written.
     /// </summary>
-    private readonly record struct Block(string? Text, string? ImagePath)
+    /// <param name="ImagePath">
+    /// Where the paste points and what we read bytes from, which for a share is
+    /// a staged local copy rather than the network file.
+    /// </param>
+    /// <param name="StoredName">
+    /// File name inside the images directory, which is what history rows and
+    /// exports must keep so the reference survives the paste.
+    /// </param>
+    private readonly record struct Block(string? Text, string? ImagePath, string? StoredName)
     {
         public bool IsText => Text != null;
-        public static Block FromText(string value) => new(value, null);
-        public static Block FromImage(string path) => new(null, path);
+        public static Block FromText(string value) => new(value, null, null);
+        public static Block FromImage(string storedName, string imagePath) => new(null, imagePath, storedName);
     }
 
     // RTF carries image bytes inline, so a long image list turns into a huge
@@ -79,6 +91,7 @@ public static class RichClipboardService
         var blocks = new List<Block>();
         var texts = new List<string>();
         var imagePaths = new List<string>();
+        string? stageDir = null;
 
         foreach (var segment in segments)
         {
@@ -87,8 +100,16 @@ public static class RichClipboardService
                 var path = DatabaseService.GetImagePath(segment.Value);
                 if (File.Exists(path))
                 {
+                    // An image that lives on a share cannot be referenced by
+                    // URL, so paste from a local copy of it instead.
+                    if (DataLocation.IsNetworkPath(path))
+                    {
+                        stageDir ??= CreateStagingDirectory();
+                        path = StageImage(path, stageDir) ?? path;
+                    }
+
                     imagePaths.Add(path);
-                    blocks.Add(Block.FromImage(path));
+                    blocks.Add(Block.FromImage(segment.Value, path));
                 }
             }
             else if (!string.IsNullOrWhiteSpace(segment.Value))
@@ -162,8 +183,86 @@ public static class RichClipboardService
         foreach (var block in blocks)
             list.Add(block.IsText
                 ? ContentSegment.Text(block.Text!)
-                : ContentSegment.Image(Path.GetFileName(block.ImagePath!)));
+                : ContentSegment.Image(block.StoredName!));
         return list;
+    }
+
+    // ─── Network shares ─────────────────────────────────────────────────
+
+    private const string StageRootName = "QuickNote-Paste";
+
+    /// <summary>
+    /// A copy of the script's images made for this one clipboard write. Share
+    /// folders come out as file://server/share/... URLs, which Chromium-based
+    /// paste targets refuse to load, and even a mapped drive letter is not
+    /// guaranteed to resolve inside another process. Null when the folder could
+    /// not be made, in which case the original reference is used anyway.
+    /// </summary>
+    private static string? CreateStagingDirectory()
+    {
+        try
+        {
+            PruneStagingFolders();
+            var dir = Path.Combine(Path.GetTempPath(), StageRootName, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static string? StageImage(string sourcePath, string? directory)
+    {
+        if (directory == null)
+            return null;
+
+        try
+        {
+            var dest = Path.Combine(directory, Path.GetFileName(sourcePath));
+            File.Copy(sourcePath, dest, overwrite: true);
+            return dest;
+        }
+        catch (Exception)
+        {
+            // Unreachable share, read-only file, name too long: fall back to
+            // pointing at the network file itself.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// A staged picture is pasted once, soon. Yesterday's folders are removed on
+    /// a best-effort basis so the temp directory does not quietly fill up.
+    /// </summary>
+    private static void PruneStagingFolders()
+    {
+        var root = Path.Combine(Path.GetTempPath(), StageRootName);
+
+        try
+        {
+            if (!Directory.Exists(root))
+                return;
+
+            var cutoff = DateTime.Now.AddDays(-1);
+            foreach (var dir in Directory.EnumerateDirectories(root))
+            {
+                try
+                {
+                    if (Directory.GetLastWriteTime(dir) < cutoff)
+                        Directory.Delete(dir, recursive: true);
+                }
+                catch (Exception)
+                {
+                    // Still in use by another window: leave it for next time.
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Pruning is housekeeping; it must never block a copy.
+        }
     }
 
     // ─── HTML (CF_HTML) ─────────────────────────────────────────────────
