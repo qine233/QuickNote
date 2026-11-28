@@ -14,6 +14,9 @@ public partial class SettingsDialog : Window
 {
     private bool _initializing = true;
 
+    // The same text the panel shows, assembled once, for the copy button.
+    private string _runtimeReport = "";
+
     public DataScope SelectedScope { get; private set; } = DataScope.CurrentUser;
 
     public string? SelectedCustomDirectory { get; private set; }
@@ -58,30 +61,56 @@ public partial class SettingsDialog : Window
             var data = DatabaseService.AppDataDir;
             var logs = AppSettings.Directory;
 
-            PathsText.Text =
+            var paths =
                 $"数据目录   {data}\n" +
                 $"图片目录   {System.IO.Path.Combine(data, "images")}\n" +
                 $"日志目录   {logs}";
 
-            var run = ReadTail(System.IO.Path.Combine(logs, "last-run.txt"), 2000);
-            RunInfoText.Text = string.IsNullOrWhiteSpace(run)
-                ? "（还没有记录，下次启动后这里会有版本号、进程号、exe 路径和数据目录）"
-                : run.Trim();
+            var run = ReadTail(System.IO.Path.Combine(logs, "last-run.txt"), 2000).Trim();
+            if (run.Length == 0)
+                run = "（还没有记录，下次启动后这里会有版本号、进程号、exe 路径和数据目录）";
 
-            var error = ReadTail(System.IO.Path.Combine(logs, "error.log"), 1600);
-            if (string.IsNullOrWhiteSpace(error))
+            var error = ReadTail(System.IO.Path.Combine(logs, "error.log"), 1600).Trim();
+            if (error.Length == 0)
             {
                 ErrorHeading.Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush");
-                ErrorText.Text = "（无错误记录）";
+                error = "（无错误记录）";
             }
-            else
-            {
-                ErrorText.Text = error.Trim();
-            }
+
+            PathsText.Text = paths;
+            RunInfoText.Text = run;
+            ErrorText.Text = error;
+
+            _runtimeReport =
+                $"数据目录: {data}\n" +
+                $"图片目录: {System.IO.Path.Combine(data, "images")}\n" +
+                $"日志目录: {logs}\n\n" +
+                $"--- last-run.txt ---\n{run}\n\n" +
+                $"--- error.log ---\n{error}";
         }
         catch (Exception ex)
         {
             PathsText.Text = "读取运行信息失败：" + ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Copies the whole report, so sending it somewhere takes one paste rather
+    /// than three selections.
+    /// </summary>
+    private void CopyRuntimeInfo_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(_runtimeReport))
+                Clipboard.SetText(_runtimeReport);
+            MessageBox.Show(this, "运行信息已复制到剪贴板，直接粘贴发给我即可。",
+                "复制完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"复制失败：{ex.Message}", "复制运行信息",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 

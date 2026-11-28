@@ -70,6 +70,10 @@
 
                     <!-- ════ 运行信息 ════════════════════════════════════════ -->
                     <DockPanel Margin="0,20,0,8">
+                        <Button DockPanel.Dock="Right" Content="复制运行信息"
+                                Style="{StaticResource TintButton}"
+                                FontSize="12" Padding="8,3" Margin="6,0,0,0"
+                                Click="CopyRuntimeInfo_Click" />
                         <Button DockPanel.Dock="Right" Content="打开日志文件夹"
                                 Style="{StaticResource TintButton}"
                                 FontSize="12" Padding="8,3"
@@ -82,38 +86,41 @@
                     <Border Background="{StaticResource BgInputBrush}" CornerRadius="10"
                             Padding="12,10">
                         <StackPanel>
-                            <TextBlock x:Name="PathsText" FontSize="11.5"
-                                       FontFamily="Consolas, Microsoft YaHei UI"
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       IsTextSelectionEnabled="True"
-                                       TextWrapping="Wrap" LineHeight="18" />
+                            <!-- Read-only TextBox, not TextBlock: WPF TextBlock has
+                                 no selection, so paths and logs could not be copied
+                                 out of a label. -->
+                            <TextBox x:Name="PathsText" IsReadOnly="True"
+                                     FontSize="11.5" FontFamily="Consolas, Microsoft YaHei UI"
+                                     Foreground="{StaticResource TextSecondaryBrush}"
+                                     Background="Transparent" BorderThickness="0" Padding="0"
+                                     TextWrapping="Wrap" />
 
                             <TextBlock Text="本次启动（last-run.txt）" FontSize="11"
                                        FontWeight="Medium"
                                        Foreground="{StaticResource TextSecondaryBrush}"
                                        Margin="0,12,0,4" />
-                            <TextBlock x:Name="RunInfoText" FontSize="11"
-                                       FontFamily="Consolas, Microsoft YaHei UI"
-                                       Foreground="{StaticResource TextHintBrush}"
-                                       IsTextSelectionEnabled="True"
-                                       TextWrapping="Wrap" LineHeight="16" />
+                            <TextBox x:Name="RunInfoText" IsReadOnly="True"
+                                     FontSize="11" FontFamily="Consolas, Microsoft YaHei UI"
+                                     Foreground="{StaticResource TextHintBrush}"
+                                     Background="Transparent" BorderThickness="0" Padding="0"
+                                     TextWrapping="Wrap" />
 
                             <TextBlock x:Name="ErrorHeading" Text="错误记录（error.log）"
                                        FontSize="11" FontWeight="Medium"
                                        Foreground="{StaticResource DangerBrush}"
                                        Margin="0,12,0,4" />
-                            <TextBlock x:Name="ErrorText" FontSize="11"
-                                       FontFamily="Consolas, Microsoft YaHei UI"
-                                       Foreground="{StaticResource TextHintBrush}"
-                                       IsTextSelectionEnabled="True"
-                                       TextWrapping="Wrap" LineHeight="16" />
+                            <TextBox x:Name="ErrorText" IsReadOnly="True"
+                                     FontSize="11" FontFamily="Consolas, Microsoft YaHei UI"
+                                     Foreground="{StaticResource TextHintBrush}"
+                                     Background="Transparent" BorderThickness="0" Padding="0"
+                                     TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>
 
                     <TextBlock FontSize="11" TextWrapping="Wrap"
                                Foreground="{StaticResource TextHintBrush}"
                                Margin="2,8,0,0"
-                               Text="日志只记录在本机，不会上传。出现「QuickNote 无法继续」弹窗时，把这一段内容发给我即可定位问题。" />
+                               Text="日志只记录在本机，不会上传。出现「QuickNote 无法继续」弹窗时，点上面的「复制运行信息」，把内容直接粘贴发过来即可定位问题。" />
                 </StackPanel>
             </ScrollViewer>
         </DockPanel>
