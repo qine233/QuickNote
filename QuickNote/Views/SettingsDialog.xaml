@@ -80,11 +80,12 @@
                     </DockPanel>
 
                     <Border Background="{StaticResource BgInputBrush}" CornerRadius="10"
-                            Padding="12,10" IsTextSelectionEnabled="True">
+                            Padding="12,10">
                         <StackPanel>
                             <TextBlock x:Name="PathsText" FontSize="11.5"
                                        FontFamily="Consolas, Microsoft YaHei UI"
                                        Foreground="{StaticResource TextSecondaryBrush}"
+                                       IsTextSelectionEnabled="True"
                                        TextWrapping="Wrap" LineHeight="18" />
 
                             <TextBlock Text="本次启动（last-run.txt）" FontSize="11"
@@ -94,6 +95,7 @@
                             <TextBlock x:Name="RunInfoText" FontSize="11"
                                        FontFamily="Consolas, Microsoft YaHei UI"
                                        Foreground="{StaticResource TextHintBrush}"
+                                       IsTextSelectionEnabled="True"
                                        TextWrapping="Wrap" LineHeight="16" />
 
                             <TextBlock x:Name="ErrorHeading" Text="错误记录（error.log）"
@@ -103,6 +105,7 @@
                             <TextBlock x:Name="ErrorText" FontSize="11"
                                        FontFamily="Consolas, Microsoft YaHei UI"
                                        Foreground="{StaticResource TextHintBrush}"
+                                       IsTextSelectionEnabled="True"
                                        TextWrapping="Wrap" LineHeight="16" />
                         </StackPanel>
                     </Border>
