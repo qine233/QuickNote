@@ -31,6 +31,7 @@ public partial class MainWindow : Window
         // Reopen where the window was left before anything is shown.
         _settings = AppSettings.Current;
         RestoreWindowBounds();
+        RestorePaneHeights();
 
         _viewModel = new MainViewModel();
         DataContext = _viewModel;
@@ -104,6 +105,11 @@ public partial class MainWindow : Window
 
     private void HideToTray()
     {
+        // This button hides rather than closes, so the layout is stored here -
+        // otherwise it is only written when the process finally exits, which a
+        // reboot or a killed process never reaches.
+        SaveWindowBounds();
+
         Hide();
 
         // The window is hidden, not closed: release idle managed memory so a
@@ -390,6 +396,23 @@ public partial class MainWindow : Window
             WindowState = WindowState.Maximized;
     }
 
+    /// <summary>
+    /// Reapplies the category heights the splitter was last left at. The rows
+    /// declare MinHeight/MaxHeight, so a value from another window size is
+    /// clamped by the layout itself.
+    /// </summary>
+    private void RestorePaneHeights()
+    {
+        if (_settings.ScriptPaneHeight is double script && script > 0)
+            ScriptPaneRow.Height = new GridLength(script);
+
+        if (_settings.FilePaneHeight is double file && file > 0)
+            FilePaneRow.Height = new GridLength(file);
+    }
+
+    private void PaneSplitter_DragCompleted(object sender,
+        System.Windows.Controls.Primitives.DragCompletedEventArgs e) => SaveWindowBounds();
+
     private void SaveWindowBounds()
     {
         var bounds = WindowState == WindowState.Normal
@@ -399,6 +422,11 @@ public partial class MainWindow : Window
         _settings.WindowMaximized = WindowState == WindowState.Maximized;
         _settings.WindowWidth = bounds.Width;
         _settings.WindowHeight = bounds.Height;
+
+        // The category areas are the other thing that gets stretched, and they
+        // are per tab, so both are kept.
+        _settings.ScriptPaneHeight = ScriptPaneRow.ActualHeight;
+        _settings.FilePaneHeight = FilePaneRow.ActualHeight;
 
         // Docked to the screen edge the window sits in a thin sliver; keep the
         // last real position instead of saving that.

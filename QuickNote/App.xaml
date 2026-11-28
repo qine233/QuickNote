@@ -251,11 +251,16 @@
                 <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
                 <Setter Property="FontFamily" Value="{StaticResource AppFont}" />
                 <Setter Property="FontSize" Value="13" />
-                <Setter Property="Padding" Value="10,7" />
+                <Setter Property="Padding" Value="10,6" />
+                <!-- A line of 13px Chinese text needs ~22px; 36 minus the border
+                     and vertical padding left 20, which cut the glyphs in half.
+                     Callers should size with MinHeight, never a fixed Height. -->
+                <Setter Property="MinHeight" Value="36" />
                 <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="BorderBrush" Value="Transparent" />
                 <Setter Property="CaretBrush" Value="{StaticResource PrimaryBrush}" />
                 <Setter Property="SelectionBrush" Value="{StaticResource PrimaryBrush}" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="TextBox">
@@ -263,7 +268,8 @@
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}"
                                     CornerRadius="10" Padding="{TemplateBinding Padding}">
-                                <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center" />
+                                <ScrollViewer x:Name="PART_ContentHost"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsKeyboardFocused" Value="True">

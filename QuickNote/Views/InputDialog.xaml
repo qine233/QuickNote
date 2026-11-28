@@ -21,7 +21,7 @@
             <TextBlock x:Name="PromptText" Text="请输入：" FontSize="15"
                        FontWeight="SemiBold" Margin="0,0,0,12" />
             <TextBox x:Name="InputBox" Style="{StaticResource IOSTextBox}"
-                     Height="36" FontSize="13"
+                     MinHeight="38" FontSize="13"
                      KeyDown="InputBox_KeyDown" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
                 <Button Content="取消" Width="72" Height="32"

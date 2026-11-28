@@ -39,6 +39,13 @@ public class AppSettings
     public bool WindowMaximized { get; set; }
 
     /// <summary>
+    /// Height the category area was last dragged to, per tab. Null until the
+    /// splitter is moved; the row itself clamps this to its own limits.
+    /// </summary>
+    public double? ScriptPaneHeight { get; set; }
+    public double? FilePaneHeight { get; set; }
+
+    /// <summary>
     /// Chosen data scope. Null means "never chosen": an existing machine-wide
     /// database is then picked up automatically, so sharing has to be enabled
     /// only once for every account on the computer.
